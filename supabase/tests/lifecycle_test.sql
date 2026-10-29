@@ -296,7 +296,7 @@ end $t$;
 
 do $$ begin
   perform pg_temp.assert((select open_alerts from public.device_overview where id = 'node-1001') >= 0, 'overview row');
-  perform pg_temp.assert((select count(*) from public.device_overview) = 3, 'one row per device');
+  perform pg_temp.assert((select count(*) from public.device_overview) = (select count(*) from public.devices), 'one row per device');
 end $$;
 do $t$ begin perform pg_temp.as_operator(); end $t$;
 do $$ begin perform public.send_command('node-1001', 'SIMDI_OKU'); end $$;
