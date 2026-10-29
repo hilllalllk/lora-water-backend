@@ -78,6 +78,9 @@ Decision and rationale: [ADR-0009](../docs/adr/0009-veritabani-katmanlari-komut-
 | Gateway | `gateway_sync(p)` | One call per cycle: telemetry, node heartbeats, command reports, health, next command (leased). Parts fail independently ([ADR-0010](../docs/adr/0010-gateway-sync-kiralama-tampon.md)) |
 | Gateway | `lease_next_command(gateway_id)`, `report_command(id, status, result)`, `ingest_telemetry(rows)`, `mark_devices_seen(seen)` | The parts of `gateway_sync`, also callable on their own |
 | Gateway (old firmware) | `claim_next_command()` | Takes the oldest live pending command and marks it `sent` |
+| Edge Function `ingest-tank` | `ingest_tank_reading(token, code, level_pct, valve, request_id)` | Text protocol gateways ([ADR-0011](../docs/adr/0011-metin-protokolu-ingest-tank.md)): checks the token hash, maps `DEPO_01` → device, % → mm, idempotent per request id, marks the gateway alive (service role only) |
+| SQL Editor | `issue_ingest_token(gateway_id, label)` | New gateway token, returned once; revoke with `ingest_tokens.revoked_at` |
+| Everyone (RLS) | `tank_readings` (view) | Text device readings in the hand-off shape (`device_id`, `level_percent`, `valve_state`, `received_at`) |
 | Edge Function | `claim_alert_notification(id)` / `finish_alert_notification(id, ok)` | Push outbox (service role only) |
 | pg_cron | `expire_commands()` | Every minute: `pending` past its deadline (and lease) → `expired`; stuck `sent`/`delivered` → `failed` |
 | pg_cron | `check_offline_devices()` | Every minute: device `offline` and `gateway_offline` alerts |
