@@ -1,7 +1,13 @@
 // Edge Function: send-alert-push
 //
-// Called by a Database Webhook on INSERT into public.alerts. Sends an Expo push
-// notification for the new alert to every registered phone (public.push_tokens).
+// Called by a Database Webhook on INSERT into public.alerts, and again by the
+// retry_alert_notifications() pg_cron job for alerts whose push failed. Only the alert id
+// is taken from the request; the alert itself is read from the database.
+//
+// Outbox flow (migration 20261102000300_alert_robustness.sql):
+//   claim_alert_notification(id)  -> nothing when already sent, suppressed or being sent
+//   send to every registered phone (public.push_tokens)
+//   finish_alert_notification(id, ok) -> ok=false releases the alert for the retry job
 //
 // Environment (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are provided automatically
 // on Supabase; the service role key stays on the server):
@@ -13,33 +19,13 @@
 // Deploy: see backend/README.md "Push notifications".
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
-
-const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
-const CHUNK_SIZE = 100; // Expo accepts at most 100 messages per request
-
-interface AlertRow {
-  id: number;
-  device_id: string;
-  kind: string;
-  message: string;
-  value: number | null;
-  created_at: string;
-  resolved_at: string | null;
-}
+import { buildMessages, type ClaimedAlert, sendToExpo } from './push.ts';
 
 interface WebhookPayload {
   type: 'INSERT' | 'UPDATE' | 'DELETE';
   table: string;
   schema: string;
-  record: AlertRow | null;
-  old_record: AlertRow | null;
-}
-
-interface ExpoTicket {
-  status: 'ok' | 'error';
-  id?: string;
-  message?: string;
-  details?: { error?: string };
+  record: { id?: number } | null;
 }
 
 function json(body: unknown, status = 200): Response {
@@ -65,8 +51,8 @@ Deno.serve(async (req) => {
   } catch {
     return json({ error: 'invalid json' }, 400);
   }
-  const alert = payload.record;
-  if (payload.type !== 'INSERT' || payload.table !== 'alerts' || !alert) {
+  const alertId = payload.record?.id;
+  if (payload.type !== 'INSERT' || payload.table !== 'alerts' || typeof alertId !== 'number') {
     return json({ skipped: true });
   }
 
@@ -76,56 +62,42 @@ Deno.serve(async (req) => {
     { auth: { persistSession: false } },
   );
 
-  const { data: device } = await supabase
-    .from('devices')
-    .select('name')
-    .eq('id', alert.device_id)
-    .maybeSingle();
-  const deviceName = device?.name ?? alert.device_id;
+  const { data: claimed, error: claimError } = await supabase
+    .rpc('claim_alert_notification', { p_id: alertId });
+  if (claimError) return json({ error: claimError.message }, 500);
+  const alert = (claimed as ClaimedAlert[] | null)?.[0];
+  if (!alert) return json({ skipped: true, reason: 'already sent, suppressed or in progress' });
 
-  const { data: tokens, error } = await supabase.from('push_tokens').select('token');
-  if (error) return json({ error: error.message }, 500);
-  if (!tokens || tokens.length === 0) return json({ sent: 0 });
+  const finish = (ok: boolean, error: string | null = null) =>
+    supabase.rpc('finish_alert_notification', { p_id: alert.id, p_ok: ok, p_error: error });
 
-  const messages = tokens.map(({ token }) => ({
-    to: token,
-    title: `Alarm: ${deviceName}`,
-    body: alert.message,
-    sound: 'default',
-    priority: 'high',
-    channelId: 'alarms', // created by the app on Android
-    data: { alertId: alert.id, deviceId: alert.device_id, kind: alert.kind },
-  }));
-
-  const headers: Record<string, string> = {
-    Accept: 'application/json',
-    'Accept-Encoding': 'gzip, deflate',
-    'Content-Type': 'application/json',
-  };
-  const expoToken = Deno.env.get('EXPO_ACCESS_TOKEN');
-  if (expoToken) headers.Authorization = `Bearer ${expoToken}`;
-
-  let sent = 0;
-  const invalid: string[] = [];
-  for (let i = 0; i < messages.length; i += CHUNK_SIZE) {
-    const chunk = messages.slice(i, i + CHUNK_SIZE);
-    const res = await fetch(EXPO_PUSH_URL, { method: 'POST', headers, body: JSON.stringify(chunk) });
-    if (!res.ok) {
-      console.error('Expo push error', res.status, await res.text());
-      continue;
+  try {
+    const { data: tokens, error } = await supabase.from('push_tokens').select('token');
+    if (error) throw new Error(`push_tokens: ${error.message}`);
+    if (!tokens || tokens.length === 0) {
+      await finish(true);
+      return json({ sent: 0 });
     }
-    const { data: tickets } = (await res.json()) as { data: ExpoTicket[] };
-    tickets.forEach((ticket, j) => {
-      if (ticket.status === 'ok') sent++;
-      else if (ticket.details?.error === 'DeviceNotRegistered') invalid.push(chunk[j].to);
-      else console.error('Expo ticket error', ticket.message);
-    });
-  }
 
-  // Forget tokens of uninstalled apps
-  if (invalid.length > 0) {
-    await supabase.from('push_tokens').delete().in('token', invalid);
-  }
+    const outcome = await sendToExpo(
+      buildMessages(alert, tokens.map((t) => t.token as string)),
+      { accessToken: Deno.env.get('EXPO_ACCESS_TOKEN') },
+    );
 
-  return json({ sent, removed: invalid.length });
+    // Forget tokens of uninstalled apps
+    if (outcome.invalid.length > 0) {
+      await supabase.from('push_tokens').delete().in('token', outcome.invalid);
+    }
+
+    if (outcome.retryableError) {
+      await finish(false, outcome.retryableError);
+      return json({ sent: outcome.sent, retry: true, error: outcome.retryableError }, 502);
+    }
+    await finish(true);
+    return json({ sent: outcome.sent, removed: outcome.invalid.length });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    await finish(false, message);
+    return json({ error: message }, 500);
+  }
 });
