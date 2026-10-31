@@ -307,4 +307,13 @@ begin
 end $$;
 \echo 'OK  device_overview online flags, admin-only system_health, unregister_push_token'
 
+-- The app listens to exactly these tables (mobile/src/lib/realtime.ts REALTIME_TABLES).
+-- A table missing from the publication silently drops every subscription of the channel.
+do $$ begin
+  perform pg_temp.assert((select array_agg(tablename::text order by tablename) from pg_publication_tables
+                           where pubname = 'supabase_realtime' and schemaname = 'public')
+                         = array['alerts', 'commands', 'devices'], 'realtime publication = app channel tables');
+end $$;
+\echo 'OK  realtime publication matches the app channel'
+
 \echo 'ALL TESTS PASSED (robustness_test)'
