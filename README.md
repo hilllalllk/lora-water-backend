@@ -1,7 +1,9 @@
 # Backend (Supabase)
 
+Step-by-step cloud setup (Turkish): [docs/kurulum.md](docs/kurulum.md) · full setup guide: [docs/05-kurulum.md](docs/05-kurulum.md) · security: [docs/08-guvenlik.md](docs/08-guvenlik.md)
+
 ```
-backend/supabase/
+supabase/
 ├── migrations/
 │   ├── 20261014000000_init.sql          # tables, triggers, RLS, Realtime
 │   ├── 20261018000000_roles_alarms.sql  # roles, alarm thresholds, alerts, push tokens
@@ -61,12 +63,12 @@ After that, admins manage roles from the app's "Kullanıcılar" screen. The last
 
 The gateway is an ESP32 on Wi-Fi. It signs in as the gateway user and calls `gateway_sync()` once per cycle (1-3 s) over a kept-alive HTTPS connection.
 
-Setup: [docs/05-kurulum.md §1](../docs/05-kurulum.md#1-supabase-projesi). Design: [docs/02 §6](../docs/02-sistem-mimarisi.md#6-supabase-veri-modeli).
+Setup: [docs/05-kurulum.md §1](docs/05-kurulum.md#1-supabase-projesi). Design: docs/02 §6 (`lora-water-management` → `docs/02-sistem-mimarisi.md`).
 
 ## Layers and entry points
 
 Writes go through database functions (RPC); reads use RLS-protected tables and views.
-Decision and rationale: [ADR-0009](../docs/adr/0009-veritabani-katmanlari-komut-yasam-dongusu.md).
+Decision and rationale: ADR-0009 (`lora-water-management` → `docs/adr/0009-veritabani-katmanlari-komut-yasam-dongusu.md`).
 
 | Caller | Function | What it does |
 |---|---|---|
@@ -75,10 +77,10 @@ Decision and rationale: [ADR-0009](../docs/adr/0009-veritabani-katmanlari-komut-
 | App (all) | `device_overview` (view) | Device + `online`, `gateway_online`, open alert count, unfinished command |
 | App (admin) | `system_health()` | Gateways, last 24 h ingest/commands/push, cron job status |
 | App (all) | `register_push_token()` / `unregister_push_token()` | Phone push token on sign-in / sign-out |
-| Gateway | `gateway_sync(p)` | One call per cycle: telemetry, node heartbeats, command reports, health, next command (leased). Parts fail independently ([ADR-0010](../docs/adr/0010-gateway-sync-kiralama-tampon.md)) |
+| Gateway | `gateway_sync(p)` | One call per cycle: telemetry, node heartbeats, command reports, health, next command (leased). Parts fail independently (ADR-0010 (`lora-water-management` → `docs/adr/0010-gateway-sync-kiralama-tampon.md`)) |
 | Gateway | `lease_next_command(gateway_id)`, `report_command(id, status, result)`, `ingest_telemetry(rows)`, `mark_devices_seen(seen)` | The parts of `gateway_sync`, also callable on their own |
 | Gateway (old firmware) | `claim_next_command()` | Takes the oldest live pending command and marks it `sent` |
-| Edge Function `ingest-tank` | `ingest_tank_reading(token, code, level_pct, valve, request_id)` | Text protocol gateways ([ADR-0011](../docs/adr/0011-metin-protokolu-ingest-tank.md)): checks the token hash, maps `DEPO_01` → device, % → mm, idempotent per request id, marks the gateway alive (service role only) |
+| Edge Function `ingest-tank` | `ingest_tank_reading(token, code, level_pct, valve, request_id)` | Text protocol gateways (ADR-0011 (`lora-water-management` → `docs/adr/0011-metin-protokolu-ingest-tank.md`)): checks the token hash, maps `DEPO_01` → device, % → mm, idempotent per request id, marks the gateway alive (service role only) |
 | SQL Editor | `issue_ingest_token(gateway_id, label)` | New gateway token, returned once; revoke with `ingest_tokens.revoked_at` |
 | Everyone (RLS) | `tank_readings` (view) | Text device readings in the hand-off shape (`device_id`, `level_percent`, `valve_state`, `received_at`) |
 | Edge Function | `claim_alert_notification(id)` / `finish_alert_notification(id, ok)` | Push outbox (service role only) |
@@ -142,3 +144,14 @@ bash backend/supabase/tests/run.sh
 `run.sh` creates a fresh database per test file, applies the stub and all migrations in order, then runs the test. pg_cron is not needed locally (the migration skips the schedule with a notice).
 
 If you change the schema, add a new migration file (`YYYYMMDDHHMMSS_description.sql`) and add tests to a test file listed in `run.sh`.
+
+## Related repositories
+
+This project was split from the `lora-water-management` monorepo into four repositories:
+
+| Repository | Contents |
+|---|---|
+| `lora-water-management` | Project overview, architecture, ADRs, development log (Turkish docs) |
+| `lora-water-backend` | Supabase: migrations, RLS, Edge Functions, database tests; setup and security docs |
+| `lora-water-hardware` | ESP32 firmware (nodes, gateways), TypeScript protocol tools, hardware BOM; protocol and hardware docs |
+| `lora-water-mobile` | React Native (Expo) app; design screens |

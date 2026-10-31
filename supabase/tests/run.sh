@@ -2,7 +2,7 @@
 # Tests the schema and RLS policies in throwaway PostgreSQL databases.
 # Every test file gets a fresh database: stub + all migrations (in order) + the test.
 # Requires: psql and a reachable PostgreSQL (PGHOST/PGUSER/PGPASSWORD env vars).
-#   bash backend/supabase/tests/run.sh
+#   bash supabase/tests/run.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 DB="${TEST_DB:-lwm_test}"

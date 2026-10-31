@@ -1,0 +1,13 @@
+# Secrets (never commit)
+.env
+.env.local
+*.env.local
+
+# Supabase CLI (also in supabase/.gitignore)
+supabase/.temp/
+supabase/.branches/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
