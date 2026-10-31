@@ -155,3 +155,4 @@ This project was split from the `lora-water-management` monorepo into four repos
 | `lora-water-backend` | Supabase: migrations, RLS, Edge Functions, database tests; setup and security docs |
 | `lora-water-hardware` | ESP32 firmware (nodes, gateways), TypeScript protocol tools, hardware BOM; protocol and hardware docs |
 | `lora-water-mobile` | React Native (Expo) app; design screens |
+# lora-water-backend
